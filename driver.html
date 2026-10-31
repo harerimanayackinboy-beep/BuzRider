@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BuzRider Driver</title>
+<style>
+:root{--navy:#102D35;--teal:#16A394;--orange:#F4A340;--bg:#f2f8f8;--card:#fff;--txt:#0b2229;--mut:#5b7076;--bd:#c9d8da}
+@media(prefers-color-scheme:dark){:root{--bg:#0b1a1f;--card:#12272e;--txt:#e8f1f2;--mut:#9db2b6;--bd:#2a434a}}
+*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;background:var(--bg);color:var(--txt)}
+header{background:var(--navy);color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center}
+header b span{color:var(--orange)}header small{color:#9fc;letter-spacing:.15em}
+main{max-width:520px;margin:0 auto;padding:12px 16px 40px}
+.card{background:var(--card);border-radius:18px;padding:16px;margin:12px 0}
+input,button{font:inherit;width:100%;padding:13px;border-radius:12px;border:1px solid var(--bd);margin:6px 0;background:var(--card);color:var(--txt)}
+button{background:var(--teal);color:#fff;border:0;font-weight:700}
+button.ghost{background:none;color:var(--teal);border:1px solid var(--teal)}button:disabled{opacity:.5}
+.err{background:#fde8e6;color:#b3261e;padding:10px;border-radius:10px;margin:8px 0;word-break:break-word}
+.pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:13px;font-weight:700;background:#fff1d6;color:#7a4b00}
+.pill.approved{background:#d7f3ee;color:#0b6b5f}.pill.rejected,.pill.suspended{background:#fde8e6;color:#b3261e}
+.tabs{display:flex;gap:8px;margin-top:12px}.tabs button{margin:0}.tabs button.off{background:none;color:var(--teal);border:1px solid var(--teal)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid div{background:var(--bg);border-radius:12px;padding:10px}.grid b{display:block;font-size:20px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}.mut{color:var(--mut);font-size:14px}
+</style></head><body>
+<header><b>Buz<span>Rider</span> Driver</b><small>MOVE. DELIVER. EARN.</small></header>
+<main id="app"></main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const sb=supabase.createClient('https://yxwcdmzpeqznuoxmvqmy.supabase.co','sb_publishable_qdkQRsmJeWtbmeV9xK_4zw_MkhfH0n9');
+const app=document.getElementById('app'),$=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+const TYPES=[['id','ID'],['passport','Passport'],['driving_licence','Driving licence'],['vehicle_registration','Vehicle registration'],['profile_photo','Profile photo'],['proof_of_address','Proof of address']];
+let mode='in',view='acct';
+const tabs=()=>'<div class="tabs">'+[['acct','Account'],['jobs','Jobs'],['work','My work'],['help','Help']].map((t,i)=>'<button class="'+(view===t[0]?'':'off')+'" id="t'+(i+1)+'">'+t[1]+'</button>').join('')+'</div>';
+const wire=u=>{[['acct',1],['jobs',2],['work',3],['help',4]].forEach(t=>{$('t'+t[1]).onclick=()=>{view=t[0];stopTimer();home(u)}})};
+const box=m=>{const e=$('err');if(e)e.innerHTML=m?'<div class="err">'+esc(m)+'</div>':''};
+function login(){
+ app.innerHTML='<div class="card"><h2>'+(mode==='in'?'Sign in':'Create driver account')+'</h2>'+
+ (mode==='up'?'<input id="n" placeholder="Full name" autocomplete="name">':'')+
+ '<input id="e" type="email" placeholder="Email" autocomplete="email"><input id="p" type="password" placeholder="Password (6+ characters)">'+
+ '<button id="go">'+(mode==='in'?'Sign in':'Create account')+'</button>'+
+ '<button class="ghost" id="gg">Continue with Google</button><button class="ghost" id="sw">'+(mode==='in'?'New driver? Create account':'I already have an account')+'</button><div id="err"></div></div>';
+ $('gg').onclick=async()=>{const r=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});if(r.error)box(r.error.message)};
+ $('sw').onclick=()=>{mode=mode==='in'?'up':'in';login()};
+ $('go').onclick=async()=>{
+  const email=$('e').value.trim(),password=$('p').value;box('');
+  if(mode==='up'){
+   const name=$('n').value.trim();if(!name)return box('Enter your full name.');
+   const r=await sb.auth.signUp({email,password,options:{data:{full_name:name}}});
+   if(r.error)return box(r.error.message);
+   if(!r.data.session)return box('Account created. Confirm your email, then sign in.');
+   return home(r.data.user);
+  }
+  const r=await sb.auth.signInWithPassword({email,password});
+  if(r.error)return box(r.error.message);home(r.data.user);
+ };
+}
+const fail=m=>{app.innerHTML='<div class="card"><div class="err">'+esc(m)+'</div><button id="so">Sign out</button></div>';$('so').onclick=()=>sb.auth.signOut().then(login)};
+async function home(u){
+ if(view==='work')return work(u);
+ if(view==='jobs')return jobs(u);
+ if(view==='help')return help(u);
+ app.innerHTML='<div class="card">Loading…</div>';const uid=u.id;
+ let p=await sb.from('driver_profiles').select('*').eq('id',uid).maybeSingle();
+ if(!p.error&&!p.data){const i=await sb.from('driver_profiles').insert({id:uid});if(i.error)return fail('driver_profiles: '+i.error.message);p=await sb.from('driver_profiles').select('*').eq('id',uid).maybeSingle()}
+ if(p.error||!p.data)return fail('driver_profiles: '+(p.error?p.error.message:'no row'));
+ const us=await sb.from('users').select('full_name').eq('id',uid).maybeSingle();
+ const nm=u.user_metadata&&u.user_metadata.full_name;
+ if(us.data&&!us.data.full_name&&nm){await sb.from('users').update({full_name:nm}).eq('id',uid);us.data.full_name=nm}
+ const vr=await sb.from('vehicles').select('*').eq('driver_id',uid).maybeSingle();const veh=vr.data||{};
+ const d=await sb.from('driver_documents').select('*').eq('driver_id',uid);
+ if(d.error)return fail('driver_documents: '+d.error.message);
+ const ts=x=>{const m=String(x.file_path).match(/-(\d+)\.[^.]+$/);return m?+m[1]:0};
+ const docs=(d.data||[]).slice().sort((a,b)=>ts(a)-ts(b)),latest={};
+ docs.forEach(x=>latest[x.document_type]=x);
+ const ok=t=>latest[t]&&latest[t].verification_status==='approved';
+ const st=p.data.verification_status,approved=st==='approved';
+ online=!!p.data.is_online;startLoc(uid);
+ const need=[['ID or passport',ok('id')||ok('passport')],['Driving licence',ok('driving_licence')],['Vehicle registration',ok('vehicle_registration')],['Profile photo',ok('profile_photo')],['Proof of address',ok('proof_of_address')]];
+ const left=need.filter(x=>!x[1]).length;
+ let h=tabs()+'<div class="card"><div class="row"><b>'+esc((us.data&&us.data.full_name)||u.email)+'</b><span class="pill '+esc(st)+'">'+esc(st)+'</span></div>'+
+ '<p class="mut">'+(approved?(p.data.is_online?'You are online. Keep this page open and allow location so you can receive jobs.':'You are approved. You can go online.'):left?left+' of 5 required documents still need approval.':'All documents approved. Waiting for the manager to approve your account.')+'</p>'+
+ '<button id="on" '+(approved?'':'disabled')+'>'+(p.data.is_online?'You are online. Go offline':'Go online')+'</button><div id="err"></div></div>'+
+ '<div class="card"><b>Your vehicle</b><select id="vt">'+['motorcycle','car','van','truck'].map(x=>'<option '+(veh.type===x?'selected':'')+'>'+x+'</option>').join('')+'</select>'+
+ '<input id="vr" placeholder="Registration number" value="'+esc(veh.registration_number||'')+'"><input id="vc" type="number" min="0" placeholder="Capacity (kg)" value="'+esc(veh.capacity_kg==null?'':veh.capacity_kg)+'"><input id="vm" type="number" min="0" placeholder="Maximum load (kg)" value="'+esc(veh.max_load_kg==null?'':veh.max_load_kg)+'">'+
+ '<button id="vs">Save vehicle</button><div id="err3"></div></div>'+
+ '<div class="card"><b>Documents</b><p class="mut">Required: ID or passport (one of them), driving licence, vehicle registration, profile photo and proof of address.</p>';
+ TYPES.forEach(t=>{const x=latest[t[0]];
+  h+='<div style="margin:12px 0"><div class="row"><span>'+t[1]+'</span>'+(x?'<span class="pill '+esc(x.verification_status)+'">'+esc(x.verification_status)+'</span>':'<span class="mut">Not uploaded</span>')+'</div>'+
+  (x&&x.rejection_reason?'<div class="err">Rejected: '+esc(x.rejection_reason)+'</div>':'')+
+  '<input type="file" accept="image/*,application/pdf" data-t="'+t[0]+'"></div>'});
+ h+='<div id="err2"></div></div><button class="ghost" id="so">Sign out</button>';
+ app.innerHTML=h;wire(u);
+ $('so').onclick=()=>{online=false;stopTimer();sb.auth.signOut().then(login)};
+ $('vs').onclick=async()=>{const e3=$('err3'),reg=$('vr').value.trim(),c=Number($('vc').value),m=Number($('vm').value);
+  if(!reg||!(c>=0)||!(m>=0)||$('vc').value===''||$('vm').value==='')return e3.innerHTML='<div class="err">Enter registration number and valid weights.</div>';
+  const row={driver_id:uid,type:$('vt').value,registration_number:reg,capacity_kg:c,max_load_kg:m};
+  const r=veh.id?await sb.from('vehicles').update(row).eq('id',veh.id).select('id'):await sb.from('vehicles').insert(row).select('id');
+  e3.innerHTML=r.error?'<div class="err">'+esc(r.error.message)+'</div>':'<p class="mut">Vehicle saved.</p>'};
+ $('on').onclick=async()=>{const r=await sb.from('driver_profiles').update({is_online:!p.data.is_online}).eq('id',uid).select('id');
+  if(r.error)return box(r.error.message);if(!r.data.length)return box('Not allowed.');home(u)};
+ app.querySelectorAll('input[type=file]').forEach(i=>i.onchange=async()=>{
+  const f=i.files[0];if(!f)return;const t=i.dataset.t,e2=$('err2');
+  const ext=((f.name.split('.').pop())||'jpg').toLowerCase().replace(/[^a-z0-9]/g,'');
+  const path=uid+'/'+t+'-'+Date.now()+'.'+ext;e2.innerHTML='<p class="mut">Uploading…</p>';
+  const up=await sb.storage.from('driver-documents').upload(path,f,{contentType:f.type});
+  if(up.error){e2.innerHTML='<div class="err">'+esc(up.error.message)+'</div>';return}
+  const ins=await sb.from('driver_documents').insert({driver_id:uid,document_type:t,file_path:path,verification_status:'pending'});
+  if(ins.error){e2.innerHTML='<div class="err">'+esc(ins.error.message)+'</div>';return}
+  home(u)});
+}
+
+const R=x=>'R'+Number(x||0).toFixed(2),D=x=>x?new Date(x).toLocaleString():'';
+const sum=(a,f)=>a.reduce((t,x)=>t+Number(f(x)||0),0);
+async function work(u){
+ app.innerHTML=tabs()+'<div class="card">Loading…</div>';wire(u);const uid=u.id;
+ const [dl,py,po,rt]=await Promise.all([
+  sb.from('deliveries').select('id,request_id,driver_id,vehicle_id,status,commission_percentage,driver_earnings,platform_commission,assigned_at,picked_up_at,delivered_at,cancelled_reason,created_at,updated_at,otp_attempts').eq('driver_id',uid).order('created_at',{ascending:false}).limit(200),
+  sb.from('payments').select('*'),sb.from('payouts').select('*').eq('driver_id',uid).order('created_at',{ascending:false}),
+  sb.from('ratings').select('*').eq('driver_id',uid).order('created_at',{ascending:false})]);
+ const bad=[['deliveries',dl],['payments',py],['payouts',po],['ratings',rt]].filter(x=>x[1].error).map(x=>'<div class="err">'+x[0]+': '+esc(x[1].error.message)+'</div>').join('');
+ const del=dl.data||[],done=del.filter(x=>x.status==='delivered'),canc=del.filter(x=>x.status==='cancelled');
+ const now=Date.now(),day=864e5,at=x=>new Date(x.delivered_at||x.created_at).getTime();
+ const today=done.filter(x=>now-at(x)<day),week=done.filter(x=>now-at(x)<7*day);
+ const cashOwed=sum((py.data||[]).filter(x=>x.method==='cash'&&x.cash_confirmed_by_driver&&!x.cash_settled_at),x=>x.cash_owed_to_platform);
+ const paid=sum((po.data||[]).filter(x=>x.status==='paid'),x=>x.amount);
+ const rs=rt.data||[],avg=rs.length?(sum(rs,x=>x.score)/rs.length).toFixed(1):'–';
+ app.innerHTML=tabs()+bad+
+ '<div class="card"><b>Earnings</b><div class="grid" style="margin-top:8px"><div>Today<b>'+R(sum(today,x=>x.driver_earnings))+'</b></div><div>Last 7 days<b>'+R(sum(week,x=>x.driver_earnings))+'</b></div><div>Total earned<b>'+R(sum(done,x=>x.driver_earnings))+'</b></div><div>Platform commission<b>'+R(sum(done,x=>x.platform_commission))+'</b></div><div>Cash you owe BuzRider<b>'+R(cashOwed)+'</b></div><div>Payouts received<b>'+R(paid)+'</b></div></div></div>'+
+ '<div class="card"><b>Summary</b><div class="grid" style="margin-top:8px"><div>Completed<b>'+done.length+'</b></div><div>Cancelled<b>'+canc.length+'</b></div><div>Rating<b>'+avg+(rs.length?' ★':'')+'</b></div><div>Reviews<b>'+rs.length+'</b></div></div></div>'+
+ '<div class="card"><b>Deliveries</b>'+(del.map(x=>'<div style="margin:10px 0;border-top:1px solid var(--bd);padding-top:8px"><div class="row"><span>'+D(x.delivered_at||x.created_at)+'</span><span class="pill '+(x.status==='delivered'?'approved':x.status==='cancelled'?'rejected':'')+'">'+esc(String(x.status).replace(/_/g,' '))+'</span></div><div class="mut">'+(x.status==='delivered'?'You earned '+R(x.driver_earnings)+' · commission '+R(x.platform_commission):'')+esc(x.cancelled_reason||'')+'</div></div>').join('')||'<p class="mut">No deliveries yet.</p>')+'</div>'+
+ '<div class="card"><b>Payouts</b>'+((po.data||[]).map(x=>'<div class="row" style="margin:8px 0"><span>'+D(x.paid_at||x.created_at)+'</span><span>'+R(x.amount)+' · '+esc(x.status)+'</span></div>').join('')||'<p class="mut">No payouts yet.</p>')+'</div>'+
+ '<div class="card"><b>Customer ratings</b>'+(rs.slice(0,20).map(x=>'<div style="margin:8px 0"><b>'+'★'.repeat(x.score||0)+'</b> <span class="mut">'+D(x.created_at)+'</span><div>'+esc(x.comment||'')+'</div></div>').join('')||'<p class="mut">No ratings yet.</p>')+'</div>';
+ wire(u)}
+
+let timer=null,locT=null,online=false;
+const stopTimer=()=>{if(timer){clearInterval(timer);timer=null}};
+function pushLoc(uid){if(!online||!navigator.geolocation)return;
+ navigator.geolocation.getCurrentPosition(p=>sb.from('driver_locations').upsert({driver_id:uid,location:'SRID=4326;POINT('+p.coords.longitude+' '+p.coords.latitude+')',updated_at:new Date().toISOString()}),()=>{},{enableHighAccuracy:true,timeout:10000})}
+function startLoc(uid){if(locT)clearInterval(locT);locT=setInterval(()=>pushLoc(uid),30000);pushLoc(uid)}
+const NEXT={driver_assigned:['driver_arriving','I am on my way to pickup'],driver_arriving:['picked_up','I picked up the item'],picked_up:['in_transit','Start trip to destination']};
+const maps=a=>'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(a);
+const reqCard=r=>'<div class="mut">Pickup</div><div>'+esc(r.pickup_address)+' <a target="_blank" rel="noreferrer" href="'+maps(r.pickup_address)+'">Navigate</a></div><div class="mut" style="margin-top:6px">Destination</div><div>'+esc(r.destination_address)+' <a target="_blank" rel="noreferrer" href="'+maps(r.destination_address)+'">Navigate</a></div>'+
+ '<p class="mut">'+esc(r.item_description||'')+(r.weight_kg?' · '+esc(r.weight_kg)+' kg':'')+(r.distance_km?' · '+esc(r.distance_km)+' km':'')+' · '+esc(r.payment_method)+' · '+esc(r.currency==='ZAR'||!r.currency?'R':r.currency)+Number(r.price||0).toFixed(2)+'</p>';
+async function jobs(u){
+ stopTimer();const uid=u.id;
+ const draw=async()=>{
+  if(view!=='jobs'){return stopTimer()}
+  if(document.activeElement&&['INPUT','TEXTAREA'].includes(document.activeElement.tagName))return;
+  const A=['driver_assigned','driver_arriving','picked_up','in_transit'],since=new Date(Date.now()-48*864e5).toISOString();
+  const [ad,of,rd]=await Promise.all([sb.from('deliveries').select('id,request_id,driver_id,vehicle_id,status,commission_percentage,driver_earnings,platform_commission,assigned_at,picked_up_at,delivered_at,cancelled_reason,created_at,updated_at,otp_attempts').eq('driver_id',uid).in('status',A).limit(1),sb.from('delivery_offers').select('*').eq('status','pending').gt('expires_at',new Date().toISOString()),
+   sb.from('deliveries').select('id,request_id,platform_commission').eq('driver_id',uid).eq('status','delivered').gt('delivered_at',since)]);
+  const act=(ad.data||[])[0],offers=act?[]:(of.data||[]),rdone=rd.data||[];
+  const dd=offers.length?await sb.from('deliveries').select('id,request_id').in('id',offers.map(x=>x.delivery_id)):{data:[]};
+  const rids=[...(act?[act.request_id]:[]),...(dd.data||[]).map(x=>x.request_id),...rdone.map(x=>x.request_id)];
+  const [rq,py,ms]=await Promise.all([rids.length?sb.from('delivery_requests').select('*').in('id',rids):{data:[]},rdone.length?sb.from('payments').select('delivery_id,cash_confirmed_by_driver').in('delivery_id',rdone.map(x=>x.id)):{data:[]},act?sb.from('messages').select('*').eq('delivery_id',act.id).order('created_at'):{data:[]}]);
+  const R_={};(rq.data||[]).forEach(x=>R_[x.id]=x);const D_={};(dd.data||[]).forEach(x=>D_[x.id]=x.request_id);
+  const conf={};(py.data||[]).forEach(x=>{if(x.cash_confirmed_by_driver)conf[x.delivery_id]=1});
+  const cash=rdone.filter(x=>R_[x.request_id]&&R_[x.request_id].payment_method==='cash'&&!conf[x.id]);
+  let h=tabs()+[ad.error,of.error,rq.error,ms.error].filter(Boolean).map(x=>E2(x.message)).join('')+'<div id="jerr"></div>';
+  cash.forEach(x=>{const r=R_[x.request_id];h+='<div class="card"><b>Confirm cash</b><p>Collect '+R(r.price)+' from '+esc(r.customer_name||'the customer')+'. You owe BuzRider '+R(x.platform_commission)+' commission.</p><button class="alt" data-cash="'+x.id+'">I received the cash</button></div>'});
+  if(act){const r=R_[act.request_id]||{},lab={driver:'You',customer:'Customer',system:'BuzRider support'};
+   h+='<div class="card"><div class="row"><b>Active delivery</b><span class="pill approved">'+esc(act.status.replace(/_/g,' '))+'</span></div>'+reqCard(r)+
+   (r.customer_phone?'<a href="tel:'+esc(r.customer_phone)+'">Call '+esc(r.customer_name||'customer')+'</a>':'')+'<div style="margin-top:10px">'+
+   (NEXT[act.status]?'<button data-adv="'+NEXT[act.status][0]+'">'+NEXT[act.status][1]+'</button>':'')+
+   (act.status==='picked_up'||act.status==='in_transit'?'<input id="pin" inputmode="numeric" placeholder="Customer PIN (if asked)"><button class="alt" id="fin">Delivered</button>':'')+'</div></div>'+
+   '<div class="card"><b>Messages</b>'+((ms.data||[]).map(m=>'<div style="margin:8px 0"><span class="mut">'+(lab[m.sender_type]||m.sender_type)+' · '+new Date(m.created_at).toLocaleTimeString()+'</span><div>'+esc(m.body)+'</div></div>').join('')||'<p class="mut">No messages yet.</p>')+
+   '<input id="msg" maxlength="1000" placeholder="Write a message"><button id="snd">Send</button></div>'}
+  else if(!online)h+='<div class="card"><p class="mut">You are offline. Go online on the Account tab to receive jobs.</p></div>';
+  else if(!offers.length)h+='<div class="card"><p class="mut">Waiting for jobs near you. Keep this page open and allow location.</p></div>';
+  offers.forEach(o=>{const r=R_[D_[o.delivery_id]]||{};
+   h+='<div class="card"><div class="row"><b>New job</b><span class="mut">expires '+new Date(o.expires_at).toLocaleTimeString()+'</span></div>'+reqCard(r)+'<button data-acc="'+o.id+'">Accept</button><button class="ghost" data-dec="'+o.id+'">Decline</button></div>'});
+  app.innerHTML=h;wire(u);
+  const msg=m=>{$('jerr').innerHTML=E2(m)};
+  app.querySelectorAll('[data-acc]').forEach(b=>b.onclick=async()=>{const r=await sb.rpc('accept_offer',{p_offer_id:b.dataset.acc});if(r.error)return msg(r.error.message);if(!r.data)msg('This job is no longer available.');draw()});
+  app.querySelectorAll('[data-dec]').forEach(b=>b.onclick=async()=>{const r=await sb.rpc('decline_offer',{p_offer_id:b.dataset.dec});if(r.error)return msg(r.error.message);draw()});
+  app.querySelectorAll('[data-adv]').forEach(b=>b.onclick=async()=>{const r=await sb.rpc('advance_delivery',{p_delivery_id:act.id,p_status:b.dataset.adv});if(r.error)return msg(r.error.message);if(!r.data)msg('That step is not allowed.');draw()});
+  app.querySelectorAll('[data-cash]').forEach(b=>b.onclick=async()=>{const r=await sb.rpc('confirm_cash',{p_delivery_id:b.dataset.cash});if(r.error)return msg(r.error.message);draw()});
+  if($('snd'))$('snd').onclick=async()=>{const body=$('msg').value.trim();if(!body)return;const r=await sb.from('messages').insert({delivery_id:act.id,sender_type:'driver',sender_id:uid,body});if(r.error)return msg(r.error.message);draw()};
+  if($('fin'))$('fin').onclick=async()=>{const r=await sb.rpc('complete_delivery',{p_delivery_id:act.id,p_otp:$('pin').value.trim()||null});if(r.error)return msg(r.error.message);
+   const m={ok:'Delivered. Well done!',wrong_pin:'Wrong PIN. Ask the customer again.',locked:'Too many wrong PIN attempts. Contact support.',not_allowed:'You cannot complete this delivery now.'};
+   await draw();const e=$('jerr');if(e)e.innerHTML=r.data==='ok'?'<p class="pill approved">'+m.ok+'</p>':E2(m[r.data]||'Unknown result')};
+ };
+ await draw();timer=setInterval(draw,8000)}
+const E2=m=>'<div class="err">'+esc(m)+'</div>';
+
+async function help(u){
+ stopTimer();const uid=u.id;
+ app.innerHTML=tabs()+'<div class="card">Loading…</div>';wire(u);
+ const [tk,nt,dl]=await Promise.all([sb.from('support_tickets').select('*').eq('driver_id',uid).order('created_at',{ascending:false}),sb.from('notifications').select('*').eq('user_id',uid).order('created_at',{ascending:false}).limit(20),sb.from('deliveries').select('id,created_at,status').eq('driver_id',uid).order('created_at',{ascending:false}).limit(20)]);
+ const bad=[tk,nt,dl].filter(x=>x.error).map(x=>E2(x.error.message)).join('');
+ app.innerHTML=tabs()+bad+'<div class="card"><b>Messages from BuzRider</b>'+((nt.data||[]).map(n=>'<div style="margin:10px 0;border-top:1px solid var(--bd);padding-top:8px"><div class="row"><b>'+esc(n.title)+'</b>'+(n.read_at?'':'<button class="ghost" style="width:auto;margin:0;padding:4px 10px" data-rd="'+n.id+'">Mark read</button>')+'</div><div>'+esc(n.body||'')+'</div><div class="mut">'+D(n.created_at)+'</div></div>').join('')||'<p class="mut">No messages.</p>')+'</div>'+
+ '<div class="card"><b>Contact support</b><select id="tt"><option value="issue">Report an issue</option><option value="dispute">Dispute a delivery or decision</option></select>'+
+ '<select id="td"><option value="">Not about one delivery</option>'+(dl.data||[]).map(x=>'<option value="'+x.id+'">'+D(x.created_at)+' · '+esc(String(x.status).replace(/_/g,' '))+'</option>').join('')+'</select>'+
+ '<textarea id="tm" rows="4" placeholder="Describe what happened" style="width:100%;font:inherit;padding:12px;border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--txt)"></textarea><button id="ts">Send to support</button><div id="te"></div></div>'+
+ '<div class="card"><b>My requests</b>'+((tk.data||[]).map(x=>'<div style="margin:10px 0;border-top:1px solid var(--bd);padding-top:8px"><div class="row"><span>'+esc(x.type)+'</span><span class="pill '+(x.status==='resolved'?'approved':'')+'">'+esc(x.status.replace('_',' '))+'</span></div><div>'+esc(x.message)+'</div>'+(x.decision?'<div class="mut">Decision: '+esc(x.decision)+(x.decision_note?' · '+esc(x.decision_note):'')+'</div>':'')+'</div>').join('')||'<p class="mut">No requests yet.</p>')+'</div>';
+ wire(u);
+ $('ts').onclick=async()=>{const m=$('tm').value.trim();if(!m)return $('te').innerHTML=E2('Write a message first.');
+  const r=await sb.from('support_tickets').insert({driver_id:uid,delivery_id:$('td').value||null,type:$('tt').value,message:m});
+  if(r.error)return $('te').innerHTML=E2(r.error.message);help(u)};
+ app.querySelectorAll('[data-rd]').forEach(b=>b.onclick=async()=>{await sb.from('notifications').update({read_at:new Date().toISOString()}).eq('id',b.dataset.rd);help(u)});
+}
+sb.auth.getSession().then(r=>r.data.session?home(r.data.session.user):login());
+</script></body></html>
